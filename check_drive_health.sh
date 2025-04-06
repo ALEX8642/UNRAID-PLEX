@@ -23,7 +23,8 @@ fw_warning_summary=()
 # Collect report for bulk output
 full_report=""
 
-for disk in /dev/sd?; do
+for disk in /dev/sd*; do
+  [[ -b "$disk" && "$disk" =~ ^/dev/sd[a-z]+$ ]] || continue
   model=$(smartctl -i "$disk" | awk -F: '/Device Model/ {gsub(/^ +| +$/, "", $2); print $2}')
   fw=$(smartctl -i "$disk" | awk -F: '/Firmware Version/ {gsub(/^ +| +$/, "", $2); print $2}')
   [[ -z "$model" ]] && continue
