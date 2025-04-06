@@ -2,6 +2,8 @@
 
 echo "🔍 SMART Drive Health Report - $(date)"
 echo "================================================================================="
+echo "⚠️  Note: SAS drives may not return full SMART data without additional parameters (e.g., -d sat or -d scsi)."
+echo "   This script currently skips SAS drives unless manually adapted."
 
 # Declare known firmware issues with severity and reference
 # Format: [model_prefix] = $'FWVER|SEVERITY|Description|Link\n...'
@@ -24,11 +26,34 @@ fw_warning_summary=()
 full_report=""
 
 for disk in /dev/sd*; do
+  # Skip non-block devices or partitions
   [[ -b "$disk" && "$disk" =~ ^/dev/sd[a-z]+$ ]] || continue
-  model=$(smartctl -i "$disk" | awk -F: '/Device Model/ {gsub(/^ +| +$/, "", $2); print $2}')
-  fw=$(smartctl -i "$disk" | awk -F: '/Firmware Version/ {gsub(/^ +| +$/, "", $2); print $2}')
-  [[ -z "$model" ]] && continue
 
+  echo "🧪 Checking $disk..." >&2
+
+  # Get SMART info and capture stderr
+  id_output=$(smartctl -i "$disk" 2>&1)
+
+  # Skip unsupported USB bridge devices
+  if echo "$id_output" | grep -q "Unknown USB bridge"; then
+    echo "🔌 Skipping USB device $disk (unsupported USB bridge)" >&2
+    continue
+  # Skip SAS transport unless handled explicitly
+  elif echo "$id_output" | grep -q "Transport protocol: SAS"; then
+    echo "🚫 SAS drive detected at $disk. May require -d sat or -d scsi for full SMART support." >&2
+    continue
+  # Parse model and firmware from output if possible
+  elif echo "$id_output" | grep -q "Device Model"; then
+    model=$(echo "$id_output" | awk -F: '/Device Model/ {gsub(/^ +| +$/, "", $2); print $2}')
+    fw=$(echo "$id_output" | awk -F: '/Firmware Version/ {gsub(/^ +| +$/, "", $2); print $2}')
+  # Fallback for unknown failure
+  else
+    echo "❌ smartctl failed for $disk:" >&2
+    echo "$id_output" >&2
+    continue
+  fi
+
+  [[ -z "$model" ]] && continue
   poh=$(smartctl -A "$disk" | awk '/Power_On_Hours/ {print $10}')
   lu=$(smartctl -A "$disk" | awk '
     /Load_Cycle_Count/ {lcc=$10}
