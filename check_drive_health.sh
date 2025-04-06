@@ -1,0 +1,128 @@
+#!/bin/bash
+
+echo "🔍 SMART Drive Health Report - $(date)"
+echo "================================================================================="
+
+# Declare known firmware issues with severity and reference
+# Format: [model_prefix] = $'FWVER|SEVERITY|Description|Link\n...'
+declare -A firmware_warnings
+firmware_warnings["ST18000NM"]=$'SN04|warn|EPC bug in SN04 – avoid long SMART tests|https://github.com/Seagate/openSeaChest/issues/126'
+firmware_warnings["ST12000NM0008"]=$'SN02|crit|Premature failure risk SN02/SN03 (DataHoarder)|https://www.reddit.com/r/DataHoarder/comments/1fv5tpp\nSN03|crit|Same failure risk as SN02|https://www.reddit.com/r/DataHoarder/comments/1fv5tpp'
+firmware_warnings["ST20000NM007D"]=$'SPG0|crit|Reported issue (source needed)|'
+firmware_warnings["WD181KFGX"]=$'83.00A83|warn|Retired firmware (WD notice)|'
+
+# Track unknown models and critical issues
+unknown_models=()
+critical_issues=0
+fw_warning_summary=()
+
+# Collect report for bulk output
+full_report=""
+
+for disk in /dev/sd?; do
+  model=$(smartctl -i "$disk" | awk -F: '/Device Model/ {gsub(/^ +| +$/, "", $2); print $2}')
+  fw=$(smartctl -i "$disk" | awk -F: '/Firmware Version/ {gsub(/^ +| +$/, "", $2); print $2}')
+  [[ -z "$model" ]] && continue
+
+  poh=$(smartctl -A "$disk" | awk '/Power_On_Hours/ {print $10}')
+  lu=$(smartctl -A "$disk" | awk '
+    /Load_Cycle_Count/ {lcc=$10}
+    /Start_Stop_Count/ && !lcc {lcc=$10}
+    END {print lcc + 0}'
+  )
+  reall=$(smartctl -A "$disk" | awk '/Reallocated_Sector_Ct/ {print $10}')
+  pend=$(smartctl -A "$disk" | awk '/Current_Pending_Sector/ {print $10}')
+  temp=$(smartctl -A "$disk" | awk '/Temperature_Celsius|Temperature_Internal/ {print $10}' | head -n 1)
+
+  poh=${poh:-0}; lu=${lu:-0}; reall=${reall:-0}; pend=${pend:-0}; temp=${temp:-0}
+
+  class="Unknown"; max_poh=30000; max_lu=300000
+  if [[ "$model" == *"Exos"* || "$model" == ST*NM* ]]; then
+    class="Enterprise (Exos)"; max_poh=60000; max_lu=600000
+  elif [[ "$model" == *"WD"* || "$model" == *"Red"* ]]; then
+    class="NAS (WD Red)"; max_poh=60000; max_lu=300000
+  elif [[ "$model" == ST*VX* ]]; then
+    class="Surveillance (SkyHawk)"; max_poh=60000; max_lu=300000
+  elif [[ "$model" == ST*VE* ]]; then
+    class="Surveillance (SkyHawk AI)"; max_poh=60000; max_lu=300000
+  elif [[ "$model" == ST20*NE* ]]; then
+    class="NAS (IronWolf Pro)"; max_poh=55000; max_lu=300000
+  elif [[ "$model" == ST22*NT* ]]; then
+    class="Enterprise NAS (IronWolf Pro)"; max_poh=55000; max_lu=300000
+  else
+    unknown_models+=("$model")
+  fi
+
+  pct_poh=$(awk "BEGIN { printf \"%.1f\", (100 * $poh) / $max_poh }")
+  pct_lu=$(awk "BEGIN { printf \"%.1f\", (100 * $lu) / $max_lu }")
+  lu_pct=$(awk "BEGIN { printf \"%.1f\", $lu / $max_lu }")
+  max_pct=$(awk "BEGIN { print ($pct_poh > $pct_lu) ? $pct_poh : $pct_lu }")
+  erul_days=$(awk "BEGIN { printf \"%d\", (100 - $max_pct) * $max_poh / 100 / 24 }")
+  erul_years=$(awk "BEGIN { printf \"%.1f\", $erul_days / 365 }")
+
+  health_flags=""
+  (( reall > 0 || pend > 0 )) && health_flags+="❗ Bad sectors, "
+  (( temp >= 50 )) && health_flags+="❗ Hot, "
+  (( temp >= 45 && temp < 50 )) && health_flags+="🟡 Warm, "
+  awk "BEGIN {exit !($lu_pct > 0.9)}" && health_flags+="❗ Head park near limit, " ||
+  awk "BEGIN {exit !($lu_pct > 0.7)}" && health_flags+="🟡 Head park elevated, "
+  awk "BEGIN {exit !($max_pct >= 90)}" && health_flags+="❗ Near EOL, " ||
+  awk "BEGIN {exit !($max_pct >= 70)}" && health_flags+="🟡 Elevated wear, "
+
+  health_flags=${health_flags%, }
+  [[ -z "$health_flags" ]] && health_flags="✅ Normal"
+  [[ "$health_flags" == *"❗"* ]] && ((critical_issues++))
+
+  for prefix in "${!firmware_warnings[@]}"; do
+    if [[ "$model" == $prefix* ]]; then
+      IFS=$'\n' read -rd '' -a fw_entries <<< "${firmware_warnings[$prefix]}"
+      for entry in "${fw_entries[@]}"; do
+        IFS='|' read -r fw_id severity reason link <<< "$entry"
+        if [[ "$fw" == "$fw_id" ]]; then
+          icon="⚠️"; [[ "$severity" == "crit" ]] && icon="❗"
+          note="$icon ${disk##/dev/} ($model / $fw): $reason"
+          [[ -n "$link" ]] && note+=" ($link)"
+          fw_warning_summary+=("$note")
+        fi
+      done
+      break
+    fi
+  done
+
+  full_report+=$'\n'
+  full_report+=$'📦 Disk: '"${disk##/dev/}"$'\n'
+  full_report+=$' ├─ Model:   '"$model"$'\n'
+  full_report+=$' ├─ Class:   '"$class"$'\n'
+  full_report+=$' ├─ POH:     '"$poh"' hrs ('"$pct_poh"'% used)'$'\n'
+  full_report+=$' ├─ L/U:     '"$lu"' cycles ('"$pct_lu"'% used)'$'\n'
+  full_report+=$' ├─ Temp:    '"$temp"'°C'$'\n'
+  full_report+=$' ├─ Firmware: '"$fw"$'\n'
+  full_report+=$' ├─ Realloc/Pending: '"$reall"' / '"$pend"$'\n'
+  full_report+=$' ├─ Est. Remaining Life: '"$erul_years"' years'$'\n'
+  full_report+=$' └─ Health Flags: '"$health_flags"$'\n'
+
+done
+
+echo "$full_report"
+
+if (( critical_issues > 0 )); then
+  /usr/local/emhttp/webGui/scripts/notify -e "SMART Health Report" -s "⚠️ Disk issues detected!" -d "$critical_issues disk(s) flagged with potential failure indicators."
+else
+  /usr/local/emhttp/webGui/scripts/notify -e "SMART Health Report" -s "✅ All drives healthy" -d "No critical issues detected in SMART scan."
+fi
+
+if (( ${#fw_warning_summary[@]} > 0 )); then
+  echo ""
+  echo "📌 Firmware Warnings:"
+  for line in "${fw_warning_summary[@]}"; do
+    echo " - $line"
+  done
+fi
+
+if (( ${#unknown_models[@]} > 0 )); then
+  echo ""
+  echo "🔧 The following drive models were classified as 'Unknown':"
+  printf ' - %s\n' "${unknown_models[@]}" | sort -u
+  echo "🔀 Consider adding them to the model classification logic."
+fi
+echo "================================================================================="
