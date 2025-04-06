@@ -1,6 +1,6 @@
 # UNRAID-PLEX
 
-This is my repo for my private UNRAID media server. It will include anything custom that I have built into my setup. This is separate from my Proxmox hypervisor-based homelab, which is in another repo here: [docker-compose](https://github.com/ALEX8642/docker-compose).
+This is my repo for my private UNRAID media server. It will include anything custom that I have built into my setup.
 
 ---
 
