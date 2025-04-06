@@ -10,6 +10,10 @@ firmware_warnings["ST18000NM"]=$'SN04|warn|EPC bug in SN04 – avoid long SMART 
 firmware_warnings["ST12000NM0008"]=$'SN02|crit|Premature failure risk SN02/SN03 (DataHoarder)|https://www.reddit.com/r/DataHoarder/comments/1fv5tpp\nSN03|crit|Same failure risk as SN02|https://www.reddit.com/r/DataHoarder/comments/1fv5tpp'
 firmware_warnings["ST20000NM007D"]=$'SPG0|crit|Reported issue (source needed)|'
 firmware_warnings["WD181KFGX"]=$'83.00A83|warn|Retired firmware (WD notice)|'
+firmware_warnings["WDC WD80EFZX"]=$'82.00A82|warn|Excessive head parking in older firmware|https://support-en.wd.com/app/answers/detail/a_id/23407'
+firmware_warnings["WDC WD40EFRX"]=$'80.00A80|warn|Retired firmware, higher failure risk|https://www.reddit.com/r/DataHoarder/comments/nupry6/wd_red_failure_firmware/'
+firmware_warnings["HUS7260"]=$'A5GNT7J0|warn|Occasional issues with vibration sensitivity in older Ultrastar firmware|https://serverfault.com/questions/880460/hgst-ultrastar-disks-dropping-in-servers'
+firmware_warnings["HUH7210"]=$'JKT1|crit|Premature failure risk on HC510 units shipped with JKT1|https://forums.servethehome.com/index.php?threads/ultrastar-hc510-jkt1-head-crash.25074/'
 
 # Track unknown models and critical issues
 unknown_models=()
@@ -49,6 +53,12 @@ for disk in /dev/sd?; do
     class="NAS (IronWolf Pro)"; max_poh=55000; max_lu=300000
   elif [[ "$model" == ST22*NT* ]]; then
     class="Enterprise NAS (IronWolf Pro)"; max_poh=55000; max_lu=300000
+  elif [[ "$model" == HUH72* || "$model" == HUS72* || "$model" == *Ultrastar* ]]; then
+    class="Enterprise (HGST Ultrastar)"; max_poh=60000; max_lu=600000
+  elif [[ "$model" == TOSHIBA*MG* ]]; then
+    class="Enterprise (Toshiba MG Series)"; max_poh=60000; max_lu=600000
+  elif [[ "$model" == TOSHIBA*HDWN* ]]; then
+    class="NAS (Toshiba N300)"; max_poh=50000; max_lu=300000
   else
     unknown_models+=("$model")
   fi
