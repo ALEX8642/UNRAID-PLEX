@@ -1,0 +1,47 @@
+#!/bin/bash
+echo "🔍 PCIe ASPM Diagnostics ($(date))"
+echo "================================================================"
+printf "%-12s | %-50s | %-10s | %-40s\n" "PCIe Addr" "Device Name" "ASPM" "Notes"
+echo "-------------------------------------------------------------------------------------------------------------------------------------"
+
+while read -r line; do
+    addr=$(echo "$line" | awk '{print $1}')
+    name=$(lspci -s "$addr" | cut -d' ' -f 2-)
+
+    lnkcap=$(lspci -s "$addr" -vv | grep -m1 'LnkCap:' || echo "LnkCap: N/A")
+    lnkctl=$(lspci -s "$addr" -vv | grep -m1 'LnkCtl:' || echo "LnkCtl: N/A")
+
+    # Determine ASPM status
+    if [[ "$lnkctl" == *"ASPM Disabled"* ]]; then
+        aspm="Disabled"
+    elif [[ "$lnkctl" == *"ASPM L1 Enabled"* ]] || [[ "$lnkctl" == *"ASPM L0s L1 Enabled"* ]]; then
+        aspm="Enabled"
+    elif [[ "$lnkcap" == *"ASPM"* ]]; then
+        aspm="Partial"
+    else
+        aspm="Unsupported"
+    fi
+
+    # Determine recommendation
+    if [[ "$aspm" == "Disabled" && "$lnkcap" == *"ASPMOptComp+"* ]]; then
+        note="🔧 Try 'pcie_aspm=force'"
+    elif [[ "$aspm" == "Disabled" && "$name" == *"LSI"* ]]; then
+        note="❌ LSI blocks ASPM"
+    elif [[ "$aspm" == "Unsupported" ]]; then
+        note="Not ASPM capable"
+    elif [[ "$aspm" == "Enabled" ]]; then
+        note="✅ OK"
+    else
+        note="⚠️ Review manually"
+    fi
+
+    printf "%-12s | %-50s | %-10s | %-40s\n" "$addr" "$name" "$aspm" "$note"
+done <<< "$(lspci | awk '{print $1}')"
+
+echo
+echo "📌 Legend:"
+echo " - ✅ OK: ASPM enabled and working"
+echo " - 🔧 Try: Device supports ASPM but it's disabled (try boot params)"
+echo " - ❌ LSI blocks ASPM: Common with HBA cards, cannot be fixed"
+echo " - Unsupported: Device has no ASPM capability"
+echo " - ⚠️ Review: Inconclusive, needs deeper look"
