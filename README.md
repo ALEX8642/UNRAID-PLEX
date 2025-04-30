@@ -1,4 +1,4 @@
-# UNRAID-PLEX
+# UNRAID SCRIPTS
 
 This is my repo for my private Unraid media server setup. It includes custom tools and scripts I've developed to enhance performance, monitoring, and automation — beyond what Unraid provides out of the box.
 
